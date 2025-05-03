@@ -1,47 +1,50 @@
 from fastapi import FastAPI
-import logging
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+import os
+import logging
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
 app = FastAPI()
 
-@app.get("/scrape/tottenham")
-def scrape_tottenham():
-    url = 'https://fbref.com/en/squads/361ca564/Tottenham-Hotspur-Stats'
+@app.get("/scrape/tottenham_players")
+def scrape_tottenham_players():
+    url = 'https://fbref.com/en/squads/361ca564/2023-2024/matchlogs/c361ca564/some-player-stats-page'
     try:
         response = requests.get(url)
         response.raise_for_status()
-
         soup = BeautifulSoup(response.text, 'lxml')
-        table = soup.find('table', {'id': 'stats_standard_361ca564'})
-        if table is None:
-            logger.error("⚠️ Stats table not found on the page!")
-            return {"error": "Stats table not found."}
 
-        headers = [th.getText() for th in table.find_all('tr')[1].find_all('th')]
-        rows = table.find_all('tr')[2:]
+        table = soup.find('table', {'id': 'stats_standard_9'})
+        if table is None:
+            logger.error("⚠️ Player stats table not found on the page!")
+            return {"error": "Player stats table not found."}
+
+        headers = [th.getText() for th in table.find('thead').find_all('th')]
+        rows = table.find('tbody').find_all('tr')
+
         player_stats = []
         for row in rows:
-            cells = row.find_all(['th', 'td'])
-            player_stats.append([cell.getText() for cell in cells])
+            th = row.find('th', {'scope': 'row'})
+            td_cells = row.find_all('td')
+            if th and td_cells:
+                row_data = [th.getText()] + [td.getText() for td in td_cells]
+                player_stats.append(row_data)
+
+        # Filter rows to match header length
+        player_stats = [row for row in player_stats if len(row) == len(headers)]
 
         df = pd.DataFrame(player_stats, columns=headers)
-        df = df[df['Rk'] != 'Rk']
-        df = df.drop(columns=['Rk'])
+        if 'Rk' in df.columns:
+            df = df.drop(columns=['Rk'])
 
-        result = df.to_dict(orient='records')
-        logger.info("✅ Successfully scraped Tottenham data.")
-        return {"players": result}
+        csv_file = 'tottenham_player_stats.csv'
+        df.to_csv(csv_file, index=False)
+        logger.info("✅ Player data saved to CSV.")
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ HTTP Request failed: {e}")
-        return {"error": "Failed to retrieve data."}
+        return {"message": "Player scraping and saving complete.", "rows": len(df)}
+
     except Exception as e:
-        logger.error(f"❌ General error: {e}")
-        return {"error": "An error occurred during scraping."}
+        logger.error(f"❌ Error: {str(e)}")
+        return {"error": "An error occurred during player scraping."}
