@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -5,46 +6,60 @@ from fastapi import FastAPI
 
 app = FastAPI()
 
-@app.get("/scrape/tottenham_players")
-def scrape_tottenham_players():
+@app.get("/scrape/tottenham_all_tables")
+def scrape_ton_tables():
     url = "https://fbref.com/en/squads/361ca564/Tottenham-Hotspur-Stats"
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'lxml')
 
-    # Find all tables and pick the right one by id
-    table = soup.find('table', {'id': 'stats_standard_9'})
-    if table is None:
-        print("⚠ Player stats table not found on the page!")
-        return {"error": "Player stats table not found."}
+    # Make sure data/ directory exists
+    os.makedirs('data', exist_ok=True)
 
-    # Get all column names from 'data-stat' attributes
-    headers = [th.get('data-stat') for th in table.find('thead').find_all('th')]
+    # List of table IDs to scrape (excluding match logs)
+    table_ids = [
+        'stats_standard_9',
+        'stats_keeper_9',
+        'stats_keeper_adv_9',
+        'stats_shooting_9',
+        'stats_passing_9',
+        'stats_passing_types_9',
+        'stats_gca_9',
+        'stats_defense_9',
+        'stats_possession_9',
+        'stats_playing_time_9',
+        'stats_misc_9'
+    ]
 
-    # Collect player rows as dictionaries
-    player_stats = []
-    rows = table.find('tbody').find_all('tr')
-    for row in rows:
-        if row.get('class') and 'thead' in row.get('class'):
-            continue  # skip header rows inside tbody
+    results = {}
 
-        row_data = {}
-        cells = row.find_all(['th', 'td'])
+    for table_id in table_ids:
+        table = soup.find('table', {'id': table_id})
+        if table is None:
+            print(f"⚠ Table {table_id} not found, skipping.")
+            results[table_id] = "not found"
+            continue
 
-        for header, cell in zip(headers, cells):
-            text = cell.get_text(strip=True)
-            row_data[header] = text
+        headers = [th.getText() for th in table.find('thead').find_all('th')]
+        rows = table.find('tbody').find_all('tr')
 
-        player_stats.append(row_data)
+        table_data = []
+        for row in rows:
+            if row.find('th', {'scope': 'row'}) is None:
+                continue
+            th = row.find('th', {'scope': 'row'})
+            td_cells = row.find_all('td')
+            row_data = [th.getText()] + [td.getText() for td in td_cells]
+            if len(row_data) == len(headers):
+                table_data.append(row_data)
+            else:
+                print(f"⚠ Skipping row in {table_id} — length mismatch.")
 
-    # Convert to DataFrame
-    df = pd.DataFrame(player_stats)
+        df = pd.DataFrame(table_data, columns=headers)
 
-    # Optional: clean up or convert columns (example: drop empty rows)
-    df = df.dropna(how='all')
+        # Save to CSV inside data folder
+        csv_file = f"data/{table_id}.csv"
+        df.to_csv(csv_file, index=False)
+        print(f"✅ Saved {table_id} → {csv_file}")
+        results[table_id] = f"{len(df)} rows saved"
 
-    # Save to CSV
-    csv_file = 'tottenham_players_data.csv'
-    df.to_csv(csv_file, index=False)
-
-    print(f"✅ Player data saved to {csv_file}")
-    return {"message": "Player scraping and saving complete.", "rows": len(df)}
+    return {"message": "Scraping complete", "results": results}
